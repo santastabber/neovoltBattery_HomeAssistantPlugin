@@ -198,6 +198,53 @@ class NeovoltClient:
             _LOGGER.error("Error fetching device list: %s", error)
             return None
     
+
+    async def async_get_primary_sys_sn(self) -> Optional[str]:
+        """Get the first real system SN from the same menu endpoint used by the web app."""
+        if not self.token:
+            if not await self.async_login():
+                return None
+
+        url = f"{self.base_url}/api/stable/home/getCustomMenuEssList"
+        headers = self._get_auth_headers()
+        headers.update({
+            "Accept": "application/json, text/plain, */*",
+            "language": "en-US",
+            "operationDate": dt_util.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "platform": "AK9D8H",
+            "System": "alphacloud"
+        })
+
+        try:
+            async with asyncio.timeout(DEFAULT_TIMEOUT):
+                response = await self.session.get(url=url, headers=headers)
+                if response.status != 200:
+                    _LOGGER.debug("Failed to get ByteWatt system list with status %s", response.status)
+                    return None
+                result = await response.json()
+
+            if result.get("code") == 6069:
+                if await self.async_login():
+                    return await self.async_get_primary_sys_sn()
+                return None
+
+            if result.get("code") not in (0, 200):
+                _LOGGER.debug(
+                    "Failed to get ByteWatt system list: code=%s msg=%s",
+                    result.get("code"),
+                    result.get("msg"),
+                )
+                return None
+
+            systems = result.get("data") or []
+            for system in systems:
+                sys_sn = system.get("sysSn")
+                if sys_sn and sys_sn != "All":
+                    return sys_sn
+        except (asyncio.TimeoutError, aiohttp.ClientError, ValueError) as error:
+            _LOGGER.debug("Error fetching ByteWatt system list: %s", error)
+        return None
+
     async def async_get_battery_data(self, station_id: str = None) -> Optional[Dict[str, Any]]:
         """Get data for a specific battery using the new API endpoint."""
         if not self.token:
@@ -207,8 +254,13 @@ class NeovoltClient:
         # First get the real-time power data
         url = f"{self.base_url}/api/report/energyStorage/getLastPowerData"
         
+        # Use the real system SN where possible. The ByteWatt web app's live power
+        # diagram calls getLastPowerData with sysSn=<actual SN>; using sysSn="All"
+        # returns aggregate data that can mask UPS/off-grid status (upsModel stays 0).
+        real_sys_sn = await self.async_get_primary_sys_sn()
+        sys_sn = real_sys_sn or "All"
         params = {
-            "sysSn": "All",
+            "sysSn": sys_sn,
             "stationId": station_id or ""
         }
         

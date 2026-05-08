@@ -53,7 +53,7 @@ _LOGGER = logging.getLogger(__name__)
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
-PLATFORMS = ["sensor", "number", "time", "switch"]
+PLATFORMS = ["sensor", "binary_sensor", "number", "time", "switch"]
 
 async def async_setup(hass: HomeAssistant, config: dict):
     """Set up the Byte-Watt component."""
