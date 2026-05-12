@@ -345,6 +345,13 @@ class ByteWattSensor(CoordinatorEntity, SensorEntity):
         self._attr_icon = icon
         self._attr_entity_category = entity_category
 
+        # Home Assistant requires power sensors to expose long-term statistics
+        # before they can be selected as live power measurements in the Energy
+        # dashboard. Energy (kWh) sensors set TOTAL_INCREASING in
+        # ByteWattGridSensor; live power (W) sensors should use MEASUREMENT.
+        if device_class == "power":
+            self._attr_state_class = SensorStateClass.MEASUREMENT
+
     @property
     def device_info(self):
         """Return device info."""
