@@ -6,7 +6,6 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.const import CONF_SCAN_INTERVAL
 import homeassistant.helpers.config_validation as cv
 
 from .bytewatt_client import ByteWattClient
@@ -53,7 +52,7 @@ _LOGGER = logging.getLogger(__name__)
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
-PLATFORMS = ["sensor", "number", "time", "switch"]
+PLATFORMS = ["sensor", "binary_sensor", "number", "time", "switch"]
 
 async def async_setup(hass: HomeAssistant, config: dict):
     """Set up the Byte-Watt component."""

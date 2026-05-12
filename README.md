@@ -10,6 +10,7 @@ This integration allows you to monitor and control your Byte-Watt battery system
   - Battery percentage
   - Power flow (grid, house, battery, PV)
   - Energy statistics
+  - Off-grid/backup mode status
 
 - **Battery Control**:
   - Set charge times (start/end)
@@ -111,6 +112,8 @@ automation:
     - `einput` → Grid Power Consumption (kWh)
   
   If you're experiencing issues with certain sensors not showing data, you can enable debug logging to see the available data fields from the API.
+
+- **Off-grid Mode Binary Sensor**: The integration exposes a binary sensor for ByteWatt/Neovolt off-grid or backup mode status. It reads the `upsModel` value from the latest power data response, matching the status shown in the ByteWatt/Neovolt web UI.
 
 ## Support
 

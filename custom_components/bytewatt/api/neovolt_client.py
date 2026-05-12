@@ -3,7 +3,7 @@ import logging
 import asyncio
 import aiohttp
 from typing import Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -36,6 +36,7 @@ class NeovoltClient:
         self._settings_cache = None
         self._fresh_settings_update = False
         self._settings_update_time = None
+        self._primary_ess_cache: Dict[str, tuple[str, Optional[str]]] = {}
     
     async def async_login(self) -> bool:
         """Login to the Neovolt API using encrypted password."""
@@ -198,18 +199,111 @@ class NeovoltClient:
             _LOGGER.error("Error fetching device list: %s", error)
             return None
     
+    async def async_get_primary_ess_identifiers(
+        self, station_id: str = None
+    ) -> tuple[Optional[str], Optional[str]]:
+        """Get and cache the first real ESS serial number for reliable power data.
+
+        The power endpoint can accept sysSn="All", but that aggregate response can
+        mask fields such as upsModel. If the menu lookup is unavailable, callers
+        fall back to the configured station and sysSn="All" so existing setups
+        continue to update instead of failing completely.
+        """
+        cache_key = station_id or ""
+        cached_identifiers = self._primary_ess_cache.get(cache_key)
+        if cached_identifiers:
+            return cached_identifiers
+
+        url = f"{self.base_url}/api/stable/home/getCustomMenuEssList"
+        params = {"stationId": cache_key}
+        headers = self._get_auth_headers()
+        headers.update({
+            "Accept": "application/json, text/plain, */*",
+            "language": "en-US",
+            "platform": "AK9D8H",
+            "System": "alphacloud"
+        })
+
+        try:
+            async with asyncio.timeout(DEFAULT_TIMEOUT):
+                response = await self.session.get(
+                    url=url,
+                    params=params,
+                    headers=headers
+                )
+
+                if response.status != 200:
+                    _LOGGER.warning(
+                        "Failed to get ESS menu list with status %s; falling back to sysSn=All",
+                        response.status,
+                    )
+                    return None, station_id
+
+                result = await response.json()
+                if result.get("code") != 0 and result.get("code") != 200:
+                    if result.get("code") == 6069:
+                        _LOGGER.warning("Session expired (code 6069) during ESS menu fetch")
+                        if await self.async_login():
+                            return await self.async_get_primary_ess_identifiers(station_id)
+
+                    _LOGGER.warning(
+                        "Failed to get ESS menu list with code %s: %s; falling back to sysSn=All",
+                        result.get("code"),
+                        result.get("msg"),
+                    )
+                    return None, station_id
+
+                primary_ess = self._extract_primary_ess(result.get("data"))
+                if not primary_ess:
+                    _LOGGER.warning("ESS menu list did not include a serial; falling back to sysSn=All")
+                    return None, station_id
+
+                identifiers = (primary_ess["sysSn"], primary_ess.get("stationId") or station_id)
+                self._primary_ess_cache[cache_key] = identifiers
+                return identifiers
+
+        except (asyncio.TimeoutError, aiohttp.ClientError) as error:
+            _LOGGER.warning("Error fetching ESS menu list; falling back to sysSn=All: %s", error)
+            return None, station_id
+
+    def _extract_primary_ess(self, data: Any) -> Optional[Dict[str, str]]:
+        """Extract the first ESS identifiers from known menu response shapes."""
+        stack = [(data, "")]
+        while stack:
+            item, inherited_station_id = stack.pop(0)
+            if isinstance(item, dict):
+                station_id = item.get("stationId") or item.get("stationID") or inherited_station_id
+                sys_sn = item.get("sysSn") or item.get("sn") or item.get("essSn")
+                if sys_sn and str(sys_sn).strip().lower() != "all":
+                    return {
+                        "sysSn": str(sys_sn),
+                        "stationId": str(station_id) if station_id is not None else "",
+                    }
+
+                for key in ("children", "essList", "list", "rows", "data"):
+                    value = item.get(key)
+                    if isinstance(value, (list, dict)):
+                        stack.append((value, str(station_id) if station_id is not None else ""))
+            elif isinstance(item, list):
+                stack.extend((child, inherited_station_id) for child in item)
+
+        return None
+
     async def async_get_battery_data(self, station_id: str = None) -> Optional[Dict[str, Any]]:
         """Get data for a specific battery using the new API endpoint."""
         if not self.token:
             if not await self.async_login():
                 return None
         
-        # First get the real-time power data
+        primary_sys_sn, primary_station_id = await self.async_get_primary_ess_identifiers(station_id)
+
+        # First get the real-time power data. Prefer the real ESS serial because
+        # sysSn=All can mask outage-only fields such as upsModel in aggregate data.
         url = f"{self.base_url}/api/report/energyStorage/getLastPowerData"
         
         params = {
-            "sysSn": "All",
-            "stationId": station_id or ""
+            "sysSn": primary_sys_sn or "All",
+            "stationId": primary_station_id or station_id or ""
         }
         
         # Use timezone-aware datetime to avoid midnight issues

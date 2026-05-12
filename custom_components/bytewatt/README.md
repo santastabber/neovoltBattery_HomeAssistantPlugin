@@ -2,6 +2,8 @@
 
 This is a custom integration for Home Assistant that connects to ByteWatt/Neovolt battery systems.
 
+It provides battery monitoring, battery control services, automatic recovery, and an off-grid/backup mode binary sensor that reflects the status shown in the ByteWatt/Neovolt web UI.
+
 ## Automatic Recovery System
 
 This integration includes an automatic recovery system to handle cases where the connection to the ByteWatt API becomes stuck or stops responding. The system provides:
